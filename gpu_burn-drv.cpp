@@ -28,7 +28,7 @@
  */
 
 // Matrices are SIZE*SIZE..  POT should be efficiently implemented in CUBLAS
-#define SIZE 8192ul
+#define SIZE (8192ul * 2)
 #define USEMEM 0.9 // Try to allocate 90% of memory
 #define COMPARE_KERNEL "compare.ptx"
 
@@ -185,22 +185,25 @@ template <class T> class GPU_Test {
                availMemory() / 1024ul / 1024ul, useBytes / 1024ul / 1024ul,
                d_doubles ? "using DOUBLES" : "using FLOATS",
                d_tensors ? ", using Tensor Cores" : "");
-        size_t d_resultSize = sizeof(T) * SIZE * SIZE;
-        d_iters = (useBytes - 2 * d_resultSize) /
+        // A is the matrix, B is the vector
+        size_t d_ASize = sizeof(T) * SIZE * SIZE;
+        size_t d_BSize = sizeof(T) * SIZE;
+        size_t d_resultSize = d_BSize;
+        d_iters = (useBytes - d_ASize - d_BSize) /
                   d_resultSize; // We remove A and B sizes
         printf("Results are %zu bytes each, thus performing %zu iterations\n",
                d_resultSize, d_iters);
-        if ((size_t)useBytes < 3 * d_resultSize)
+        if ((size_t)useBytes < d_ASize + d_BSize + d_resultSize)
             throw std::string("Low mem for result. aborting.\n");
         checkError(cuMemAlloc(&d_Cdata, d_iters * d_resultSize), "C alloc");
-        checkError(cuMemAlloc(&d_Adata, d_resultSize), "A alloc");
-        checkError(cuMemAlloc(&d_Bdata, d_resultSize), "B alloc");
+        checkError(cuMemAlloc(&d_Adata, d_ASize), "A alloc");
+        checkError(cuMemAlloc(&d_Bdata, d_BSize), "B alloc");
 
         checkError(cuMemAlloc(&d_faultyElemData, sizeof(int)), "faulty data");
 
         // Populating matrices A and B
-        checkError(cuMemcpyHtoD(d_Adata, A, d_resultSize), "A -> device");
-        checkError(cuMemcpyHtoD(d_Bdata, B, d_resultSize), "B -> device");
+        checkError(cuMemcpyHtoD(d_Adata, A, d_ASize), "A -> device");
+        checkError(cuMemcpyHtoD(d_Bdata, B, d_BSize), "B -> device");
 
         initCompareKernel();
     }
@@ -214,18 +217,13 @@ template <class T> class GPU_Test {
 
         for (size_t i = 0; i < d_iters; ++i) {
             if (d_doubles)
-                checkError(
-                    cublasDgemm(d_cublas, CUBLAS_OP_N, CUBLAS_OP_N, SIZE, SIZE,
-                                SIZE, &alphaD, (const double *)d_Adata, SIZE,
-                                (const double *)d_Bdata, SIZE, &betaD,
-                                (double *)d_Cdata + i * SIZE * SIZE, SIZE),
-                    "DGEMM");
+                throw std::string("DGEMV is not implemented");
             else
                 checkError(
-                    cublasSgemm(d_cublas, CUBLAS_OP_N, CUBLAS_OP_N, SIZE, SIZE,
-                                SIZE, &alpha, (const float *)d_Adata, SIZE,
-                                (const float *)d_Bdata, SIZE, &beta,
-                                (float *)d_Cdata + i * SIZE * SIZE, SIZE),
+                    cublasSgemv(d_cublas, CUBLAS_OP_N, SIZE, SIZE,
+                                &alpha, (const float *)d_Adata, SIZE,
+                                (const float *)d_Bdata, 1, &beta,
+                                (float *)d_Cdata + i * SIZE, 1),
                     "SGEMM");
         }
     }
@@ -256,14 +254,14 @@ template <class T> class GPU_Test {
                                &d_iters, sizeof(size_t)),
                    "set param");
 
-        checkError(cuFuncSetBlockShape(d_function, g_blockSize, g_blockSize, 1),
+        checkError(cuFuncSetBlockShape(d_function, g_blockSize, 1, 1),
                    "set block size");
     }
 
     void compare() {
         checkError(cuMemsetD32Async(d_faultyElemData, 0, 1, 0), "memset");
         checkError(cuLaunchGridAsync(d_function, SIZE / g_blockSize,
-                                     SIZE / g_blockSize, 0),
+                                     1, 0),
                    "Launch grid");
         checkError(cuMemcpyDtoHAsync(d_faultyElemsHost, d_faultyElemData,
                                      sizeof(int), 0),
@@ -666,11 +664,13 @@ void launch(int runLength, bool useDoubles, bool useTensorCores,
 
     // Initting A and B with random data
     T *A = (T *)malloc(sizeof(T) * SIZE * SIZE);
-    T *B = (T *)malloc(sizeof(T) * SIZE * SIZE);
+    T *B = (T *)malloc(sizeof(T) * SIZE);
     srand(10);
     for (size_t i = 0; i < SIZE * SIZE; ++i) {
         A[i] = (T)((double)(rand() % 1000000) / 100000.0);
-        B[i] = (T)((double)(rand() % 1000000) / 100000.0);
+        if (i < SIZE) {
+            B[i] = (T)((double)(rand() % 1000000) / 100000.0);
+        }
     }
 
     // Forking a process..  This one checks the number of devices to use,

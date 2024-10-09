@@ -33,10 +33,8 @@
 #define EPSILOND 0.0000001
 
 extern "C" __global__ void compare(float *C, int *faultyElems, size_t iters) {
-	size_t iterStep = blockDim.x*blockDim.y*gridDim.x*gridDim.y;
-	size_t myIndex = (blockIdx.y*blockDim.y + threadIdx.y)* // Y
-		gridDim.x*blockDim.x + // W
-		blockIdx.x*blockDim.x + threadIdx.x; // X
+	size_t iterStep = blockDim.x*gridDim.x;
+	size_t myIndex = blockIdx.x*blockDim.x + threadIdx.x;
 
 	int myFaulty = 0;
 	for (size_t i = 1; i < iters; ++i)
@@ -47,15 +45,6 @@ extern "C" __global__ void compare(float *C, int *faultyElems, size_t iters) {
 }
 
 extern "C" __global__ void compareD(double *C, int *faultyElems, size_t iters) {
-	size_t iterStep = blockDim.x*blockDim.y*gridDim.x*gridDim.y;
-	size_t myIndex = (blockIdx.y*blockDim.y + threadIdx.y)* // Y
-		gridDim.x*blockDim.x + // W
-		blockIdx.x*blockDim.x + threadIdx.x; // X
-
-	int myFaulty = 0;
-	for (size_t i = 1; i < iters; ++i)
-		if (fabs(C[myIndex] - C[myIndex + i*iterStep]) > EPSILOND)
-			myFaulty++;
-
-	atomicAdd(faultyElems, myFaulty);
+	// Not implemented for doubles.
+	__trap();
 }
